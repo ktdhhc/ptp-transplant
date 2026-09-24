@@ -1,0 +1,11 @@
+# 本地素材：背景文章与研究笔记不随仓库发布
+docs/
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+*.swp
+
+# 依赖与产物
+node_modules/
+dist/
