@@ -1,0 +1,36 @@
+{
+  "name": "ptp-transplant",
+  "version": "0.1.0",
+  "description": "Prototype to Production Transplant: a skill for AI coding agents that connects an approved interactive prototype to an existing production backend, keeping prototype layout authority separate from real data and commands.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "ptp-transplant": "bin/cli.mjs"
+  },
+  "files": [
+    "bin",
+    "SKILL.md",
+    "reference",
+    "templates"
+  ],
+  "keywords": [
+    "skill",
+    "agent-skill",
+    "prototype",
+    "transplant",
+    "ai-coding-agent",
+    "frontend",
+    "migration"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ktdhhc/ptp-transplant.git"
+  },
+  "homepage": "https://github.com/ktdhhc/ptp-transplant#readme",
+  "bugs": {
+    "url": "https://github.com/ktdhhc/ptp-transplant/issues"
+  },
+  "engines": {
+    "node": ">=18.17"
+  }
+}

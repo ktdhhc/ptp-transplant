@@ -19,7 +19,22 @@
 
 ### 安装与试用
 
-本仓库根目录**就是 Skill 本体**（`SKILL.md` + `reference/` + `templates/`）。要让它被自动发现，把本仓库放到 Skill 发现路径下：用户级 `~/.agents/skills/ptp-transplant/`，或某个项目的 `.agents/skills/ptp-transplant/`。直接在开发目录里打开工作区不会触发它。
+本仓库根目录**就是 Skill 本体**（`SKILL.md` + `reference/` + `templates/`）。安装脚本会把这三样放进 Agent 的 Skill 发现路径：
+
+```bash
+# 安装到当前项目的 .agents/skills/ptp-transplant（默认）
+npx github:ktdhhc/ptp-transplant
+
+# 安装到用户级 ~/.agents/skills/ptp-transplant（所有项目可用）
+npx github:ktdhhc/ptp-transplant --global
+
+# 先看会写到哪里，不落盘
+npx github:ktdhhc/ptp-transplant --dry-run
+```
+
+选项：`--global`/`-g` 用户级安装、`--dir <path>` 指定目标、`--force`/`-f` 覆盖已存在、`--dry-run` 预演、`--help` 说明。安装后**重启该项目的 Agent 会话**，Skill 才会被发现。
+
+若该包已发布到 npm，也可用 `npx ptp-transplant`，参数相同。也可以不用安装器：直接把本仓库复制成 `<项目>/.agents/skills/ptp-transplant/`（或 `~/.agents/skills/ptp-transplant/`），效果一样。
 
 用户可以说“把签收的 demo 页面接到正式 Web，后端/API 已有，按 `ptp-transplant` 做”，或在支持 slash command 的宿主里显式调用 `/ptp-transplant`。Skill 应先核对 `grilling`、`to-tickets`、browser-use 和截图能力；缺失时说明影响并询问是否继续，而非静默冒充完整验收。`to-tickets` 在部分宿主只接受用户显式触发，需由用户发起 `/to-tickets`。
 
