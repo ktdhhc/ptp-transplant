@@ -1,11 +1,14 @@
 {
   "name": "ptp-transplant",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Prototype to Production Transplant: a skill for AI coding agents that connects an approved interactive prototype to an existing production backend, keeping prototype layout authority separate from real data and commands.",
   "license": "MIT",
   "type": "module",
   "bin": {
     "ptp-transplant": "bin/cli.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
   },
   "files": [
     "bin",

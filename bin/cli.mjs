@@ -1,21 +1,11 @@
 #!/usr/bin/env node
-/**
- * 把 Skill 安装到 Agent 的发现路径。
- *
- * 目标路径（按优先级）：
- *   --dir <path>  显式指定
- *   --global      ~/.agents/skills/ptp-transplant（用户级，所有项目可用）
- *   默认           <当前目录>/.agents/skills/ptp-transplant（项目级）
- */
-import { cp, mkdir, rm, stat } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SKILL_NAME = "ptp-transplant";
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-/** 随包发布的 Skill 内容；文档与开发用文件不进入安装结果 */
 const PAYLOAD = ["SKILL.md", "reference", "templates"];
 
 const HELP = `用法：npx ${SKILL_NAME} [选项]
@@ -24,9 +14,9 @@ const HELP = `用法：npx ${SKILL_NAME} [选项]
 
 选项：
   --global, -g        安装到用户级 ~/.agents/skills/${SKILL_NAME}
-  --dir <path>        安装到指定目录（该目录即 Skill 根，需以 ${SKILL_NAME} 结尾）
-  --force, -f         目标已存在时覆盖
-  --dry-run           只打印将要写入的位置，不落盘
+  --dir <path>        安装到指定目录（该目录即 Skill 根，须名为 ${SKILL_NAME}）
+  --force, -f         覆盖已安装的同名 Skill；不会覆盖其他目录
+  --dry-run           检查目标并打印预期操作，不落盘
   --help, -h          显示本说明
 
 默认：安装到 <当前目录>/.agents/skills/${SKILL_NAME}
@@ -35,7 +25,7 @@ const HELP = `用法：npx ${SKILL_NAME} [选项]
 
 function fail(message) {
   process.stderr.write(`错误：${message}\n`);
-  process.exit(1);
+  process.exitCode = 1;
 }
 
 function parseArgs(argv) {
@@ -48,10 +38,10 @@ function parseArgs(argv) {
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--dir") {
       const value = argv[index + 1];
-      if (value === undefined || value.startsWith("-")) fail("--dir 需要一个路径");
+      if (value === undefined || value.startsWith("-")) throw new Error("--dir 需要一个路径");
       options.dir = value;
       index += 1;
-    } else fail(`无法识别的选项：${arg}（用 --help 查看用法）`);
+    } else throw new Error(`无法识别的选项：${arg}（用 --help 查看用法）`);
   }
   return options;
 }
@@ -62,51 +52,136 @@ function resolveTarget(options) {
   return resolve(process.cwd(), ".agents", "skills", SKILL_NAME);
 }
 
-function isInsidePackage(target) {
-  return target === PACKAGE_ROOT || target.startsWith(PACKAGE_ROOT + sep);
+async function canonicalPath(path) {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    const parent = dirname(path);
+    if (parent === path) throw error;
+    return join(await canonicalPath(parent), basename(path));
+  }
 }
 
-async function directoryExists(path) {
-  if (!existsSync(path)) return false;
-  const info = await stat(path);
-  if (!info.isDirectory()) fail(`${path} 已存在且不是目录`);
+function comparablePath(path) {
+  return process.platform === "win32" ? path.toLowerCase() : path;
+}
+
+function contains(parent, child) {
+  const path = relative(comparablePath(parent), comparablePath(child));
+  return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
+}
+
+async function inspectTarget(target, options) {
+  if (basename(target) !== SKILL_NAME) {
+    throw new Error(`目标目录必须名为 ${SKILL_NAME}：${target}`);
+  }
+
+  const [packagePath, targetPath] = await Promise.all([
+    canonicalPath(PACKAGE_ROOT),
+    canonicalPath(target),
+  ]);
+  if (contains(packagePath, targetPath) || contains(targetPath, packagePath)) {
+    throw new Error(`目标不能是本包自身或其父子目录：${target}`);
+  }
+
+  for (const entry of PAYLOAD) {
+    await lstat(join(PACKAGE_ROOT, entry));
+  }
+
+  let info;
+  try {
+    info = await lstat(target);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    return false;
+  }
+  if (!info.isDirectory() || info.isSymbolicLink()) {
+    throw new Error(`目标已存在且不是普通目录：${target}`);
+  }
+  if (!options.force) throw new Error(`目标已存在：${target}\n如需覆盖请加 --force`);
+
+  let marker;
+  try {
+    const markerPath = join(target, "SKILL.md");
+    if (!(await lstat(markerPath)).isFile()) throw new Error("SKILL.md 不是普通文件");
+    marker = await readFile(markerPath, "utf8");
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    throw new Error(`拒绝覆盖非 ${SKILL_NAME} 安装：${target} 缺少 SKILL.md`);
+  }
+  const frontmatter = marker.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  if (!frontmatter || !/^name:[ \t]*ptp-transplant[ \t]*\r?$/m.test(frontmatter[1])) {
+    throw new Error(`拒绝覆盖非 ${SKILL_NAME} 安装：${target}`);
+  }
   return true;
 }
 
 async function install(target, options) {
-  if (isInsidePackage(target)) fail(`目标不能是本包自身（${target}）`);
-
-  for (const entry of PAYLOAD) {
-    const source = join(PACKAGE_ROOT, entry);
-    if (!existsSync(source)) fail(`安装源缺失：${source}（包内容不完整）`);
-  }
-
+  const occupied = await inspectTarget(target, options);
   if (options.dryRun) {
-    process.stdout.write(`将安装到：${target}\n`);
+    process.stdout.write(`${occupied ? "将覆盖" : "将安装到"}：${target}\n`);
     for (const entry of PAYLOAD) process.stdout.write(`  ${entry}\n`);
     return;
   }
 
-  const occupied = await directoryExists(target);
-  if (occupied && !options.force) {
-    fail(`目标已存在：${target}\n如需覆盖请加 --force`);
-  }
-
-  if (occupied) await rm(target, { recursive: true, force: true });
-  await mkdir(target, { recursive: true });
-  for (const entry of PAYLOAD) {
-    await cp(join(PACKAGE_ROOT, entry), join(target, entry), { recursive: true });
+  const parent = dirname(target);
+  await mkdir(parent, { recursive: true });
+  const staging = await mkdtemp(join(parent, `.${SKILL_NAME}-`));
+  const candidate = join(staging, SKILL_NAME);
+  const backup = join(staging, "previous");
+  let movedOld = false;
+  let installed = false;
+  try {
+    await mkdir(candidate);
+    for (const entry of PAYLOAD) {
+      await cp(join(PACKAGE_ROOT, entry), join(candidate, entry), { recursive: true });
+    }
+    if (occupied) {
+      await inspectTarget(target, options);
+      await rename(target, backup);
+      movedOld = true;
+    } else {
+      try {
+        await lstat(target);
+        throw new Error(`目标在准备期间被其他操作占用：${target}`);
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+    }
+    await rename(candidate, target);
+    installed = true;
+  } catch (error) {
+    if (movedOld) {
+      try {
+        await rename(backup, target);
+        movedOld = false;
+      } catch (restoreError) {
+        throw new Error(`安装失败，旧安装保留在 ${backup}；恢复失败：${restoreError.message}`, { cause: error });
+      }
+    }
+    throw error;
+  } finally {
+    if (!movedOld || installed) {
+      try {
+        await rm(staging, { recursive: true, force: true });
+      } catch (error) {
+        process.stderr.write(`警告：临时目录清理失败：${staging}（${error.message}）\n`);
+      }
+    }
   }
 
   process.stdout.write(`已安装 ${SKILL_NAME} → ${target}\n`);
   process.stdout.write("请重启该项目的 Agent 会话，使 Skill 被发现。\n");
 }
 
-const options = parseArgs(process.argv.slice(2));
-if (options.help) {
-  process.stdout.write(HELP);
-  process.exit(0);
+try {
+  const options = parseArgs(process.argv.slice(2));
+  if (options.help) process.stdout.write(HELP);
+  else {
+    if (options.global && options.dir !== null) throw new Error("--global 与 --dir 不能同时使用");
+    await install(resolveTarget(options), options);
+  }
+} catch (error) {
+  fail(error.message);
 }
-if (options.global && options.dir !== null) fail("--global 与 --dir 不能同时使用");
-
-await install(resolveTarget(options), options);
